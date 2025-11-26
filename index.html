@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Teacher Course Tracker</title>
+<style>
+body {
+  background: #f6f7fa;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+.container {
+  max-width: 1100px;
+  margin: 40px auto;
+  background: white;
+  border-radius: 18px;
+  box-shadow: 0 6px 32px rgba(0,0,0,0.1);
+  padding: 32px;
+}
+h1, h3 {
+  color: #273c75;
+}
+.section {
+  margin-bottom: 36px;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0;
+  font-size: 1em;
+  background: #f8fbfc;
+}
+.table th, .table td {
+  border: 1px solid #dbe4ec;
+  padding: 8px 12px;
+  text-align: left;
+}
+.table th {
+  background: #f1f7fe;
+  font-weight: bold;
+}
+input[type="text"], input[type="number"] {
+  padding: 6px;
+  width: 80px;
+  border-radius: 8px;
+  border: 1px solid #c7d2e3;
+}
+.btn {
+  border: none;
+  background: linear-gradient(90deg,#667eea,#764ba2);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-weight: 600;
+  cursor: pointer;
+  margin: 4px 0;
+  transition: box-shadow 0.2s;
+}
+.btn-danger {
+  background: #c23616 !important;
+}
+.btn:hover {
+  box-shadow: 0 2px 8px rgba(102, 126, 234, .1);
+}
+tfoot {
+  background: #f5eafb;
+}
+.highlight-over {
+  background: #ffeced !important;
+}
+input[type="number"]:invalid {
+  border:2px solid #c23616;
+}
+.grid-table input[type="number"] {
+  width: 60px;
+}
+@media(max-width: 850px) {
+  .container { padding: 6px; }
+  .table, .grid-table { font-size:0.9em; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Teacher & Course Planning Grid</h1>
+
+  <!-- Manage Teachers -->
+  <div class="section">
+    <h3>Manage Teachers</h3>
+    <form id="teacherForm">
+      <input type="text" placeholder="Initials / Name" id="teacherName" required>
+      <input type="number" placeholder="Teaching Hours" id="teacherHours" min="0" required>
+      <button class="btn" type="submit">Add Teacher</button>
+    </form>
+    <table class="table" id="teacherTable">
+      <thead><tr><th>Initials</th><th>Teaching Hrs</th><th>Remove</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Manage Courses -->
+  <div class="section">
+    <h3>Manage Courses</h3>
+    <form id="courseForm">
+      <input type="text" placeholder="Course Name" id="courseName" required>
+      <input type="number" placeholder="Target Hours" id="courseTarget" min="0">
+      <button class="btn" type="submit">Add Course</button>
+    </form>
+    <table class="table" id="courseTable">
+      <thead><tr><th>Name</th><th>Target</th><th>Remove</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Planning Grid -->
+  <div class="section">
+    <h3>Planning Grid</h3>
+    <div id="planningGrid"></div>
+  </div>
+</div>
+
+<script>
+// ********* IndexedDB SETUP *********
+const DB_NAME = "tracker-v1";
+const DB_VER = 1;
+const DB_TEACHERS = "teachers";
+const DB_COURSES = "courses";
+const DB_GRID = "planning";
+
+let db;
+
+function openDB(callback) {
+  let req=indexedDB.open(DB_NAME, DB_VER);
+  req.onupgradeneeded = e => {
+    db = e.target.result;
+    db.createObjectStore(DB_TEACHERS, {keyPath:"id",autoIncrement:true});
+    db.createObjectStore(DB_COURSES, {keyPath:"id",autoIncrement:true});
+    db.createObjectStore(DB_GRID, {keyPath:"id",autoIncrement:true});
+  };
+  req.onsuccess = e => {db=e.target.result;callback();}
+}
+
+function getAll(store,cb){
+  let tx=db.transaction(store,"readonly");
+  let req=tx.objectStore(store).getAll();
+  req.onsuccess=e=>cb(req.result||[]);
+}
+
+function addOne(store, obj, cb){
+  let tx=db.transaction(store,"readwrite");
+  tx.objectStore(store).add(obj);
+  tx.oncomplete=()=>cb&&cb();
+}
+function delOne(store,id,cb){
+  let tx=db.transaction(store,"readwrite");
+  tx.objectStore(store).delete(id);
+  tx.oncomplete=()=>cb&&cb();
+}
+function saveGrid(grid){
+  let tx=db.transaction(DB_GRID,"readwrite");
+  let s=tx.objectStore(DB_GRID);
+  s.clear().onsuccess=()=>{
+    s.add({id:1,data:grid});
+  };
+}
+
+// ********* RENDER / CRUD UI *********
+function renderTeachers(list){
+  let tbody="";
+  list.forEach(t=>
+    tbody+=`<tr>
+      <td>${t.name}</td>
+      <td>${t.hours}</td>
+      <td><button class="btn btn-danger" onclick="delTeacher(${t.id})">X</button></td>
+    </tr>`
+  );
+  document.querySelector("#teacherTable tbody").innerHTML=tbody;
+}
+
+function renderCourses(list){
+  let tbody="";
+  list.forEach(c=>
+    tbody+=`<tr>
+      <td>${c.name}</td>
+      <td>${c.target||0}</td>
+      <td><button class="btn btn-danger" onclick="delCourse(${c.id})">X</button></td>
+    </tr>`
+  );
+  document.querySelector("#courseTable tbody").innerHTML=tbody;
+}
+
+function delTeacher(id) {
+  delOne(DB_TEACHERS, id, ()=>refreshAll());
+}
+
+function delCourse(id) {
+  delOne(DB_COURSES, id, ()=>refreshAll());
+}
+
+document.getElementById("teacherForm").onsubmit=function(e){
+  e.preventDefault();
+  addOne(DB_TEACHERS, {
+    name:teacherName.value, hours:parseFloat(teacherHours.value)
+  }, ()=>refreshAll());
+  teacherName.value="";teacherHours.value="";
+};
+document.getElementById("courseForm").onsubmit=function(e){
+  e.preventDefault();
+  addOne(DB_COURSES, {
+    name:courseName.value, target:parseFloat(courseTarget.value)
+  }, ()=>refreshAll());
+  courseName.value="";courseTarget.value="";
+};
+
+function refreshAll() {
+  getAll(DB_TEACHERS, teachers=>{
+    getAll(DB_COURSES, courses=>{
+      renderTeachers(teachers);
+      renderCourses(courses);
+      loadGrid(teachers,courses);
+    });
+  });
+}
+
+// ********* PLANNING GRID *********
+function loadGrid(teachers,courses) {
+  // Get grid data
+  let tx=db.transaction(DB_GRID,"readonly");
+  let s=tx.objectStore(DB_GRID);
+  let get=s.get(1);
+  get.onsuccess=e=>{
+    let grid = (get.result&&get.result.data) || {};
+    makeGrid(courses, teachers, grid);
+  };
+}
+
+function makeGrid(courses, teachers, grid) {
+  if (courses.length===0 || teachers.length===0) {
+    document.getElementById("planningGrid").innerHTML = "<div style='color:#888;padding:16px;'>Add teachers and courses first.</div>";
+    return;
+  }
+  let html = `<table class="table grid-table"><thead><tr><th>Course</th>`;
+  teachers.forEach(t=>html+=`<th>${t.name}</th>`);
+  html += "</tr></thead><tbody>";
+
+  // Rows for each course
+  courses.forEach(c=>{
+    html += `<tr><td>${c.name}</td>`;
+    teachers.forEach(t=>{
+      // Get value (hrs) for cell
+      let val = (grid[c.id]&&grid[c.id][t.id]) || 0;
+      html += `<td>
+        <input type="number" min="0" value="${val}" data-course="${c.id}" data-teacher="${t.id}"
+         onchange="updateGridCell(this)">
+      </td>`;
+    });
+    html += "</tr>";
+  });
+  html += "</tbody><tfoot><tr><th>Total Hours</th>";
+  teachers.forEach(t=>{
+    let total = 0;
+    courses.forEach(c=>{
+      let v = (grid[c.id]&&grid[c.id][t.id]) || 0;
+      total += parseFloat(v);
+    });
+    html += `<th${total> (teachers.find(x=>x.id===t.id)?.hours||0)?' class="highlight-over"':''}>${total}</th>`;
+  });
+  html += "</tr></tfoot></table>";
+  document.getElementById("planningGrid").innerHTML=html;
+}
+
+// Called when table cell is changed
+window.updateGridCell = function(inp){
+  let cid = inp.dataset.course, tid = inp.dataset.teacher, val=inp.value;
+  let tx = db.transaction(DB_GRID, "readwrite"),
+      s = tx.objectStore(DB_GRID),
+      get = s.get(1);
+  get.onsuccess=e=>{
+    let grid = (get.result&&get.result.data)||{};
+    if (!grid[cid]) grid[cid]={};
+    grid[cid][tid]=parseFloat(val);
+    saveGrid(grid);
+    refreshAll();
+  };
+}
+
+// ********* INIT *********
+openDB(refreshAll);
+</script>
+</body>
+</html>
